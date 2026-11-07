@@ -15,7 +15,10 @@ for _k in ("GOOGLE_API_KEY", "GEMINI_API_KEY"):
     except Exception:  # noqa: BLE001  (no secrets file locally)
         pass
 
-from streamlit_webrtc import WebRtcMode, webrtc_streamer
+try:
+    from streamlit_webrtc import WebRtcMode, webrtc_streamer
+except ImportError:  # live mic unavailable; upload still works
+    webrtc_streamer = None
 
 from app.config import Settings
 from app.models.configuration import LANGUAGES
@@ -215,6 +218,10 @@ def show_saved(mgr: SessionManager, sid: str) -> None:
 
 
 def tab_live(mgr: SessionManager, configs: list) -> None:
+    if webrtc_streamer is None:
+        st.error("Live microphone needs the `streamlit-webrtc` package, which is not installed in this environment. "
+                 "Reboot the app on Streamlit Cloud (Manage app → Reboot) and check the install log; use Upload Recording meanwhile.")
+        return
     h, loop = live_holder(), bg_loop()
     cfg, name, language, consent = session_form("live", configs)
     st.caption("Press START and allow the microphone — the report updates while people speak. Press STOP to finalize.")
