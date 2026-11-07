@@ -47,32 +47,11 @@
       "name": "Guest Information",
       "criteria": [
         {
-          "id": "number_of_adults",
-          "label": "Number of Adults",
-          "instruction": "Adult guest count is established.",
-          "question": "How many adults will be staying?",
-          "priority": "high"
-        },
-        {
-          "id": "number_of_children",
-          "label": "Number of Children",
-          "instruction": "Agent establishes whether children are included, and their count if applicable. Mark NOT_APPLICABLE only if the customer explicitly says no children.",
-          "question": "Will any children be staying with you?",
-          "priority": "medium"
-        },
-        {
           "id": "number_of_rooms",
           "label": "Number of Rooms",
           "instruction": "Required room count is established. Do not infer guest count from room count.",
           "question": "How many rooms would you like to book?",
           "priority": "high"
-        },
-        {
-          "id": "room_occupancy",
-          "label": "Room Occupancy",
-          "instruction": "Guest distribution or occupancy requirements are clarified where relevant.",
-          "question": "How would you like the guests distributed across the rooms?",
-          "priority": "low"
         },
         {
           "id": "primary_guest_name",
@@ -93,61 +72,6 @@
           "instruction": "Preferred room category is discussed.",
           "question": "Do you have a preferred room type?",
           "priority": "medium"
-        },
-        {
-          "id": "bed_preference",
-          "label": "Bed Preference",
-          "instruction": "Bed configuration is established, or customer confirms no preference.",
-          "question": "Would you prefer a king, queen or twin bed setup?",
-          "priority": "low"
-        },
-        {
-          "id": "amenities",
-          "label": "Amenities",
-          "instruction": "Relevant amenity requirements are discussed.",
-          "question": "Are there any amenities that are important to you?",
-          "priority": "low"
-        },
-        {
-          "id": "special_requests",
-          "label": "Special Requests",
-          "instruction": "Agent asks about special requirements and records any response. An explicit 'no special requests' satisfies this.",
-          "question": "Do you have any special requests for your stay?",
-          "priority": "low"
-        }
-      ]
-    },
-    {
-      "id": "room_availability",
-      "name": "Room Availability",
-      "criteria": [
-        {
-          "id": "availability_check",
-          "label": "Availability Check",
-          "instruction": "Agent states whether availability has been verified. Record this as something said in the conversation, not as externally verified inventory.",
-          "question": "Shall I check availability for those dates?",
-          "priority": "high"
-        },
-        {
-          "id": "available_options",
-          "label": "Available Options",
-          "instruction": "Suitable available room options are communicated by the agent.",
-          "question": "Let me share the room options available for your dates.",
-          "priority": "medium"
-        },
-        {
-          "id": "alternative_options",
-          "label": "Alternative Options",
-          "instruction": "Alternatives are discussed when requested options are unavailable, or explicitly recorded as unnecessary.",
-          "question": "Would you like to hear alternative options?",
-          "priority": "low"
-        },
-        {
-          "id": "customer_preference",
-          "label": "Customer Preference",
-          "instruction": "Customer indicates a preferred option or declines the offered options.",
-          "question": "Which of these options would you prefer?",
-          "priority": "medium"
         }
       ]
     },
@@ -160,13 +84,6 @@
           "label": "Room Rate",
           "instruction": "The applicable room rate is communicated by the agent. Never invent rates.",
           "question": "Would you like me to go through the room rate?",
-          "priority": "medium"
-        },
-        {
-          "id": "taxes_and_fees",
-          "label": "Taxes and Fees",
-          "instruction": "Applicable taxes and additional charges are explained.",
-          "question": "Shall I explain the applicable taxes and fees?",
           "priority": "medium"
         },
         {
@@ -202,20 +119,6 @@
           "instruction": "Cancellation or refund conditions are communicated.",
           "question": "Would you like me to explain our cancellation policy?",
           "priority": "medium"
-        },
-        {
-          "id": "payment_requirements",
-          "label": "Payment Requirements",
-          "instruction": "Payment method, deposit, or advance-payment requirements are discussed.",
-          "question": "How would you like to handle payment or the advance deposit?",
-          "priority": "medium"
-        },
-        {
-          "id": "additional_policies",
-          "label": "Additional Policies",
-          "instruction": "Other required hotel policies are communicated.",
-          "question": "Is there any other hotel policy you would like me to explain?",
-          "priority": "low"
         }
       ]
     },
@@ -236,20 +139,6 @@
           "instruction": "Customer contact number is collected or confirmed.",
           "question": "What is the best contact number for you?",
           "priority": "high"
-        },
-        {
-          "id": "email_address",
-          "label": "Email Address",
-          "instruction": "Email address is collected, confirmed, or explicitly declined where optional.",
-          "question": "May I have an email address for the confirmation?",
-          "priority": "medium"
-        },
-        {
-          "id": "special_booking_instructions",
-          "label": "Special Booking Instructions",
-          "instruction": "Relevant booking notes are collected or explicitly ruled out.",
-          "question": "Any special instructions to add to the booking?",
-          "priority": "low"
         }
       ]
     },

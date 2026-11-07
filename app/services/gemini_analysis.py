@@ -92,6 +92,17 @@ def parse_result(text: str) -> AnalysisResult:
     return AnalysisResult.model_validate(data)
 
 
+def _thinking(model: str):
+    import os
+
+    if "flash" not in (model or "").lower():
+        return None  # pro models cannot disable thinking
+    try:
+        return types.ThinkingConfig(thinking_budget=int(os.getenv("ANALYSIS_THINKING_BUDGET", "0")))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 class GeminiAnalysis:
     def __init__(self, gemini: GeminiClient):
         self.gemini = gemini
@@ -105,6 +116,9 @@ class GeminiAnalysis:
             system_instruction=system,
             response_mime_type="application/json",
             temperature=0.1,
+            # Flash models "think" by default (often 5-20 s per call). The checklist is structured extraction, so
+            # turn thinking off for speed; ANALYSIS_THINKING_BUDGET=-1 restores dynamic thinking.
+            thinking_config=_thinking(s.analysis_model),
         )
         last_err = "invalid response"
         for attempt in range(2):  # one limited retry for malformed JSON

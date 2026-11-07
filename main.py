@@ -1,9 +1,11 @@
 """Sales Assist - Hotel Booking Conversation Assistant (Streamlit). Run with:  streamlit run main.py"""
 import asyncio
+import copy
 import html
 import os
 import threading
 import time
+import uuid
 
 import streamlit as st
 
@@ -21,7 +23,9 @@ except ImportError:  # live mic unavailable; upload still works
     webrtc_streamer = None
 
 from app.config import Settings
-from app.models.configuration import LANGUAGES
+from pydantic import ValidationError
+
+from app.models.configuration import LANGUAGES, Configuration
 from app.services import report_service
 from app.services.gemini_client import GeminiClient
 from app.services.session_service import SessionManager
@@ -144,6 +148,12 @@ def render_live(session, interim=None, elapsed: float = 0.0) -> None:
                        f'<div class="sub"><span>{t["met"]} of {t["applicable"]} criteria completed</span><span class="tag">{e(t["status"])}</span></div>{crits}</div>')
         st.markdown(f'<div class="card"><div class="sec">TOPIC COVERAGE</div>{topics}</div>', unsafe_allow_html=True)
 
+    runs = (s.timings or {}).get("analysis", [])
+    if runs or "first_transcript_ms" in (s.timings or {}):
+        lr = runs[-1] if runs else {}
+        st.caption(f"⏱ speech→first transcript: {(s.timings or {}).get('first_transcript_ms', '–')} ms · "
+                   f"last analysis: waited {lr.get('segments_to_request_ms', '–')} ms, Gemini took {lr.get('request_ms', '–')} ms · "
+                   f"{len(runs)} analysis run(s)")
     c1, c2, c3 = st.columns(3)
     with c1:
         with st.expander("Summary & next action", expanded=True):
@@ -277,14 +287,106 @@ def tab_upload(mgr: SessionManager, configs: list) -> None:
         st.info("Choose a recording and press Start analysis — the report fills in live on this page.")
 
 
+def _uid() -> str:
+    return uuid.uuid4().hex[:8]
+
+
+def _blank_crit() -> dict:
+    return {"_k": _uid(), "label": "", "instruction": "", "question": "", "priority": "medium"}
+
+
+def _blank_topic() -> dict:
+    return {"_k": _uid(), "name": "", "criteria": [_blank_crit()]}
+
+
+def _draft_from(cfg: dict | None) -> dict:
+    d = copy.deepcopy(cfg) if cfg else {"id": "", "name": "", "description": "", "roles": ["Hotel Booking Agent", "Customer"],
+                                        "language": "English", "topics": [_blank_topic()]}
+    for tp in d["topics"]:
+        tp["_k"] = _uid()
+        for c in tp["criteria"]:
+            c["_k"] = _uid()
+    return d
+
+
 def tab_configs(mgr: SessionManager, configs: list) -> None:
-    for c in configs:
-        with st.expander(f"{c.get('name', c['id'])} — {c.get('language', 'English')}"):
-            st.write(f"Roles: {', '.join(c.get('roles', []))}")
-            for tp in c.get("topics", []):
-                st.markdown(f"**{tp.get('name', tp['id'])}**")
-                for cr in tp.get("criteria", []):
-                    st.write(f"• {cr.get('label', cr['id'])}")
+    ss = st.session_state
+    if "cfg_sel_next" in ss:  # set by save/new before the selectbox is created
+        ss["cfg_sel"] = ss.pop("cfg_sel_next")
+    ids = [c["id"] for c in configs]
+    names = {c["id"]: c.get("name", c["id"]) for c in configs}
+    sel = st.selectbox("Configuration to edit", ids + ["__new__"], key="cfg_sel",
+                       format_func=lambda i: "➕ New configuration" if i == "__new__" else names[i])
+    if ss.get("cfg_draft_for") != sel:  # selection changed -> load a fresh draft
+        ss["cfg_draft"] = _draft_from(None if sel == "__new__" else mgr.configs.get(sel))
+        ss["cfg_draft_for"] = sel
+    d = ss["cfg_draft"]
+    k = ss["cfg_draft_for"]
+
+    st.markdown("### Edit Configuration" if sel != "__new__" else "### New Configuration")
+    d["name"] = st.text_input("Name", d["name"], key=f"n_{k}")
+    d["description"] = st.text_input("Description", d.get("description", ""), key=f"d_{k}")
+    roles = st.text_input("Roles (comma separated)", ", ".join(d.get("roles", [])), key=f"r_{k}")
+    d["roles"] = [r.strip() for r in roles.split(",") if r.strip()]
+    lang = d.get("language", "English")
+    d["language"] = st.selectbox("Language", LANGUAGES, index=LANGUAGES.index(lang) if lang in LANGUAGES else 0, key=f"l_{k}")
+
+    action = None
+    for ti, tp in enumerate(d["topics"]):
+        with st.container(border=True):
+            tp["name"] = st.text_input(f"Topic {ti + 1} name", tp["name"], key=f"tn_{tp['_k']}")
+            for c in tp["criteria"]:
+                c1, c2, c3 = st.columns([3, 6, 1], vertical_alignment="bottom")
+                c["label"] = c1.text_input("Criterion", c["label"], key=f"cl_{c['_k']}", label_visibility="collapsed", placeholder="Criterion name")
+                c["instruction"] = c2.text_input("Instruction", c.get("instruction", ""), key=f"ci_{c['_k']}", label_visibility="collapsed",
+                                                 placeholder="When is this criterion met?")
+                if c3.button("Remove", key=f"rm_{c['_k']}"):
+                    action = ("rm_crit", ti, c["_k"])
+            b1, b2, _ = st.columns([1.2, 1.2, 8])
+            if b1.button("Add criterion", key=f"ac_{tp['_k']}"):
+                action = ("add_crit", ti)
+            if b2.button("Delete topic", key=f"dt_{tp['_k']}"):
+                action = ("del_topic", ti)
+    if st.button("Add topic", key=f"at_{k}"):
+        action = ("add_topic",)
+
+    if action:
+        if action[0] == "rm_crit":
+            d["topics"][action[1]]["criteria"] = [c for c in d["topics"][action[1]]["criteria"] if c["_k"] != action[2]]
+        elif action[0] == "add_crit":
+            d["topics"][action[1]]["criteria"].append(_blank_crit())
+        elif action[0] == "del_topic":
+            d["topics"].pop(action[1])
+        else:
+            d["topics"].append(_blank_topic())
+        st.rerun()
+
+    s1, s2, _ = st.columns([1.5, 1.5, 7])
+    if s1.button("Save configuration", type="primary", key=f"sv_{k}"):
+        clean = copy.deepcopy(d)
+        clean["topics"] = [tp for tp in clean["topics"] if tp["name"].strip() or any(c["label"].strip() for c in tp["criteria"])]
+        for tp in clean["topics"]:
+            tp["criteria"] = [c for c in tp["criteria"] if c["label"].strip()]
+            tp.pop("_k", None)
+            for c in tp["criteria"]:
+                c.pop("_k", None)
+        try:
+            cfg = Configuration(**clean).model_dump()
+            if sel == "__new__" and cfg["id"] in ids:
+                cfg["id"] = f"{cfg['id']}_{_uid()[:4]}"
+            mgr.configs.save(cfg)
+        except ValidationError as ex:
+            st.error("; ".join(x["msg"].replace("Value error, ", "") for x in ex.errors()))
+        else:
+            ss["cfg_sel_next"] = cfg["id"]
+            ss.pop("cfg_draft_for", None)
+            st.success("Configuration saved.")
+            st.rerun()
+    if sel != "__new__" and len(ids) > 1 and s2.button("Delete configuration", key=f"dc_{k}"):
+        mgr.configs.delete(sel)
+        ss["cfg_sel_next"] = next(i for i in ids if i != sel)
+        ss.pop("cfg_draft_for", None)
+        st.rerun()
 
 
 def tab_recent(mgr: SessionManager) -> None:

@@ -45,8 +45,11 @@ class TranscriptAssembler:
     Events returned are ("interim", {...}) or ("final", {...}).
     """
 
-    def __init__(self, idle_s: float = 1.5, clock: Callable[[], float] = time.monotonic):
+    def __init__(self, idle_s: float = 1.5, clock: Callable[[], float] = time.monotonic, max_utterance_s: float = 7.0, max_words: int = 30):
         self.idle_s = idle_s
+        self.max_utterance_s = max_utterance_s  # continuous speech is cut into segments so analysis never waits for a pause
+        self.max_words = max_words
+        self._prefix = ""  # text already finalized from a still-running cumulative transcript
         self.clock = clock
         self.t0 = clock()
         self._reset()
@@ -57,6 +60,7 @@ class TranscriptAssembler:
         self.interim = ""
         self.spk = "unknown"
         self.start: Optional[float] = None
+        self.began: Optional[float] = None
         self.last_event = self.clock()
 
     def _pending(self) -> str:
@@ -69,6 +73,8 @@ class TranscriptAssembler:
             events += self._finalize()  # speaker changed -> close previous utterance
         if self.start is None:
             self.start = offset if offset is not None else self.clock() - self.t0
+        if self.began is None:
+            self.began = self.clock()
         self.spk = spk if speaker is not None or self.spk == "unknown" else self.spk
         self.last_event = self.clock()
         return events
@@ -77,12 +83,16 @@ class TranscriptAssembler:
         if not text:
             return []
         events = self._touch(speaker, offset)
+        text = self._strip(text)
+        if not text:
+            return events
         self.interim = text
         events.append(("interim", {"speaker_key": self.spk, "text": self._pending(), "start": self.start}))
         return events
 
     def on_input(self, text: str, finished: bool, speaker: Optional[str] = None, offset: Optional[float] = None) -> list:
         events = self._touch(speaker, offset)
+        text = self._strip(text)
         if text:
             if self.buf and text.startswith(self.buf):  # cumulative style
                 self.buf = text
@@ -90,20 +100,38 @@ class TranscriptAssembler:
                 self.buf += text
             self.interim = ""
         if finished:
+            self._prefix = ""
             events += self._finalize()
         elif self._pending():
             events.append(("interim", {"speaker_key": self.spk, "text": self._pending(), "start": self.start}))
         return events
 
+    def _strip(self, text: str) -> str:
+        """Drop the part of a cumulative transcript that was already emitted by a forced split."""
+        pw, tw = self._prefix.split(), text.split()
+        if pw and tw[:len(pw)] == pw:
+            return " ".join(tw[len(pw):])
+        return text
+
     def on_turn_complete(self) -> list:
+        self._prefix = ""
         return self._finalize()
 
     def tick(self) -> list:
-        if self._pending() and self.clock() - self.last_event >= self.idle_s:
+        pend = self._pending()
+        if not pend:
+            return []
+        now = self.clock()
+        if now - self.last_event >= self.idle_s:
+            self._prefix = ""
             return self._finalize()
+        if (self.began is not None and now - self.began >= self.max_utterance_s) or len(pend.split()) >= self.max_words:
+            self._prefix = (self._prefix + " " + pend).strip()
+            return self._finalize()  # forced split mid-speech
         return []
 
     def flush(self) -> list:
+        self._prefix = ""
         return self._finalize()
 
     def _finalize(self) -> list:
