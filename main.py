@@ -1,7 +1,9 @@
-"""RepAssist - Hotel Booking Conversation Assistant (Streamlit). Run with:  streamlit run main.py"""
+"""Sales Assist - Hotel Booking Conversation Assistant (Streamlit). Run with:  streamlit run main.py"""
 import asyncio
 import html
 import os
+import threading
+import time
 
 import streamlit as st
 
@@ -13,6 +15,8 @@ for _k in ("GOOGLE_API_KEY", "GEMINI_API_KEY"):
     except Exception:  # noqa: BLE001  (no secrets file locally)
         pass
 
+from streamlit_webrtc import WebRtcMode, webrtc_streamer
+
 from app.config import Settings
 from app.models.configuration import LANGUAGES
 from app.services import report_service
@@ -21,7 +25,7 @@ from app.services.session_service import SessionManager
 from app.utils.storage import ConfigStore, SessionStore
 from app.utils.validation import fmt_ts, validate_audio
 
-st.set_page_config(page_title="RepAssist", page_icon="🏨", layout="wide")
+st.set_page_config(page_title="Sales Assist", page_icon="🏨", layout="wide")
 
 CSS = """<style>
 .stApp{background:#f3f4f6}.block-container{padding-top:1.5rem;max-width:1400px}
@@ -35,6 +39,11 @@ CSS = """<style>
 .topic{border-bottom:1px solid #e5e7eb;padding:10px 0}.topic .row{display:flex;justify-content:space-between;font-size:17px;font-weight:700}
 .topic .sub{display:flex;justify-content:space-between;color:#6b7280;font-size:14px;margin-top:6px}.topic .tag{background:#f3f4f6;border-radius:999px;padding:2px 10px;font-size:13px}
 .crit{display:flex;gap:12px;align-items:center;font-size:16px;padding:5px 4px}.ok{color:#15803d;font-weight:700;width:16px}.no{color:#9ca3af;width:16px}.rv{color:#b45309;width:16px}
+.stTabs [data-baseweb="tab-list"]{background:#fff;gap:6px;padding:8px 14px;border-radius:10px;border:1px solid #e5e7eb}
+.stTabs [data-baseweb="tab"]{height:auto;padding:10px 18px;border-radius:8px;background:transparent}
+.stTabs [data-baseweb="tab"] p{font-size:18px;font-weight:500;color:#1f2937}
+.stTabs [aria-selected="true"]{background:#eff6ff}.stTabs [aria-selected="true"] p{color:#1d4ed8;font-weight:700}
+.stTabs [data-baseweb="tab-highlight"],.stTabs [data-baseweb="tab-border"]{display:none}
 </style>"""
 
 
@@ -46,11 +55,44 @@ def get_mgr() -> SessionManager:
     return SessionManager(s, GeminiClient(s), SessionStore(s.sessions_dir, persist=s.save_sessions), configs)
 
 
+@st.cache_resource
+def bg_loop() -> asyncio.AbstractEventLoop:
+    """One persistent event loop in a background thread: runs Gemini Live + analysis while Streamlit reruns."""
+    loop = asyncio.new_event_loop()
+    threading.Thread(target=loop.run_forever, daemon=True).start()
+    return loop
+
+
+@st.cache_resource
+def live_holder() -> dict:
+    """State shared with the WebRTC audio thread: the active live runtime and the 16 kHz resampler."""
+    return {"rt": None, "rs": None}
+
+
+def on_audio(frame):
+    """Runs in the WebRTC thread for every mic frame: resample to 16 kHz mono PCM16 and push to Gemini Live."""
+    import av
+
+    h = live_holder()
+    rt = h["rt"]
+    if rt is not None:
+        if h["rs"] is None:
+            h["rs"] = av.AudioResampler(format="s16", layout="mono", rate=16000)
+        out = h["rs"].resample(frame)
+        for f in (out if isinstance(out, list) else [out]):
+            if f is not None:
+                bg_loop().call_soon_threadsafe(rt.push_audio, f.to_ndarray().tobytes())
+    return frame
+
+
+RTC = {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+
+
 def e(x) -> str:
     return html.escape(str(x))
 
 
-def render_live(session) -> None:
+def render_live(session, interim=None, elapsed: float = 0.0) -> None:
     """Draw the whole report for the session's current state (called repeatedly while processing)."""
     s = session
     d = report_service.dashboard(s)
@@ -62,7 +104,7 @@ def render_live(session) -> None:
     last = s.segments[-1].start if s.segments else 0
     st.markdown(
         f'<div class="card hdr"><b>{e(s.name)}</b><span class="cfg">{e(s.config.get("name", ""))}</span>'
-        f'<span class="time">{fmt_ts(max(s.duration_s, last))}</span>'
+        f'<span class="time">{fmt_ts(max(s.duration_s, last, elapsed))}</span>'
         f'<span class="pill {pill[1]}">{e(pill[0])}</span><span class="pill {final[1]}">{final[0]}</span></div>'
         f'<div class="card"><span style="font-size:19px">Overall Coverage: <b>{e(ov["display"])}</b> '
         f'<span style="color:#6b7280">{ov["met"]} of {ov["applicable"]} applicable criteria met</span></span>'
@@ -81,7 +123,11 @@ def render_live(session) -> None:
                 f'<div class="seg{" alt" if i % 2 else ""}"><span class="ts">[{fmt_ts(g.start)}]</span>'
                 f'<span class="sp">{e(g.speaker)}:</span><br>{e(g.text)}</div>' for i, g in enumerate(s.segments))
         else:
-            rows = '<div style="color:#6b7280">Transcript will appear here as soon as transcription finishes…</div>'
+            rows = ""
+        if interim:
+            rows += f'<div class="seg" style="opacity:.6"><span class="sp">{e(interim["speaker"])}:</span><br><i>{e(interim["text"])}</i></div>'
+        if not rows:
+            rows = '<div style="color:#6b7280">Transcript will appear here as people speak…</div>'
         st.markdown(f'<div class="card"><div class="sec">LIVE TRANSCRIPT</div><div class="tr">{rows}</div></div>', unsafe_allow_html=True)
     with right:
         topics = ""
@@ -143,49 +189,17 @@ def start(mgr: SessionManager, name: str, cfg: dict, language: str, filename: st
     return s.id
 
 
-def main() -> None:
-    st.markdown(CSS, unsafe_allow_html=True)
-    mgr = get_mgr()
-    st.markdown("## <span style='color:#1d4ed8'>RepAssist</span> <span style='font-size:16px;color:#4b5563;font-weight:400'>Hotel Booking Conversation Assistant</span>", unsafe_allow_html=True)
-    if not mgr.settings.configured:
-        st.error("No GOOGLE_API_KEY / GEMINI_API_KEY found. Add it to Streamlit secrets (or .env locally).")
-        st.stop()
+def session_form(key: str, configs: list):
+    cfg = st.selectbox("Configuration", configs, format_func=lambda c: c.get("name", c["id"]), key=f"cfg_{key}")
+    c1, c2 = st.columns(2)
+    name = c1.text_input("Session name", key=f"name_{key}")
+    dl = cfg.get("language")
+    language = c2.selectbox("Language", LANGUAGES, index=LANGUAGES.index(dl) if dl in LANGUAGES else 0, key=f"lang_{key}")
+    consent = st.checkbox("I confirm the participants consented to this recording.", key=f"consent_{key}")
+    return cfg, name, language, consent
 
-    with st.sidebar:
-        st.header("Recent sessions")
-        sessions = mgr.list()
-        labels = {x.id: f"{x.name} ({x.status.value.title()})" for x in sessions}
-        picked = st.selectbox("Open", [None] + list(labels), format_func=lambda i: "— select —" if i is None else labels[i])
-        if picked and st.button("Delete session"):
-            asyncio.run(mgr.delete(picked))
-            st.rerun()
 
-    configs = mgr.configs.list()
-    if not configs:
-        st.error("No conversation configuration found.")
-        st.stop()
-
-    new_sid = None
-    with st.expander("New session — upload or record a conversation", expanded=not (picked or st.session_state.get("sid"))):
-        cfg = st.selectbox("Configuration", configs, format_func=lambda c: c.get("name", c["id"]))
-        c1, c2 = st.columns(2)
-        name = c1.text_input("Session name")
-        dl = cfg.get("language")
-        language = c2.selectbox("Language", LANGUAGES, index=LANGUAGES.index(dl) if dl in LANGUAGES else 0)
-        consent = st.checkbox("I confirm the participants consented to this recording.")
-        u1, u2 = st.columns(2)
-        up = u1.file_uploader("Upload recording", type=["wav", "mp3", "aiff", "aif", "aac", "ogg", "flac"])
-        rec = u2.audio_input("…or record now")
-        if st.button("Start analysis", type="primary", disabled=not consent or not (up or rec)):
-            f = up or rec
-            new_sid = start(mgr, name, cfg, language, getattr(f, "name", "") or "recording.wav", f.getvalue())
-            if new_sid:
-                st.session_state["sid"] = new_sid
-
-    sid = new_sid or picked or st.session_state.get("sid")
-    if not sid:
-        st.info("Upload or record a conversation above — the report fills in live right here.")
-        return
+def show_saved(mgr: SessionManager, sid: str) -> None:
     rt = mgr.runtime(sid)
     if not rt:
         st.error("Session not found.")
@@ -194,17 +208,117 @@ def main() -> None:
     audio = mgr.store.session_dir(sid) / s.audio_file if s.audio_file else None
     if audio and audio.exists():
         st.audio(audio.read_bytes(), format=s.audio_mime or "audio/wav")
-    view = st.empty()
-    if new_sid:
-        asyncio.run(run_live(mgr, sid, view))
-        mgr.runtimes.pop(sid, None)  # reload from disk next time (fresh event-loop state)
-        rt = mgr.runtime(sid)
+    render_live(s)
+    if s.finalized or s.segments:
+        st.download_button("Download HTML report", report_service.export_html(s, audio, mgr.settings.embed_audio_max_mb),
+                           file_name=f"sales_assist_{sid}.html", mime="text/html", key=f"dl_{sid}")
+
+
+def tab_live(mgr: SessionManager, configs: list) -> None:
+    h, loop = live_holder(), bg_loop()
+    cfg, name, language, consent = session_form("live", configs)
+    st.caption("Press START and allow the microphone — the report updates while people speak. Press STOP to finalize.")
+    ctx = webrtc_streamer(key="sales-assist-live", mode=WebRtcMode.SENDONLY, audio_frame_callback=on_audio,
+                          media_stream_constraints={"audio": True, "video": False}, rtc_configuration=RTC)
+    playing = bool(ctx.state.playing)
+    if playing and h["rt"] is None:  # mic just started -> open a live session
+        if not consent:
+            st.warning("Tick the consent box, then press STOP and START again.")
+        else:
+            s = mgr.create(name, cfg, language, "live", True)
+            h["rs"], h["rt"] = None, mgr.runtime(s.id)
+            asyncio.run_coroutine_threadsafe(h["rt"].start_live(), loop)
+            st.session_state["live_sid"] = s.id
+    elif not playing and h["rt"] is not None:  # mic stopped -> finalize the report
+        rt, h["rt"] = h["rt"], None
+        with st.spinner("Finalizing report…"):
+            try:
+                asyncio.run_coroutine_threadsafe(rt.stop_live(), loop).result(180)
+            except Exception as ex:  # noqa: BLE001
+                st.error(f"Could not finalize: {ex}")
+    if playing and h["rt"] is not None:  # live view: redraw every second while speaking
+        rt = h["rt"]
+        view = st.empty()
+        while ctx.state.playing:
+            with view.container():
+                render_live(rt.session, rt.interim, time.monotonic() - rt._t_start if rt._t_start else 0)
+            time.sleep(1.0)
+        st.rerun()
+    elif st.session_state.get("live_sid"):
+        show_saved(mgr, st.session_state["live_sid"])
     else:
-        with view.container():
-            render_live(rt.session)
-    if rt.session.finalized or rt.session.segments:
-        st.download_button("Download HTML report", report_service.export_html(rt.session, audio, mgr.settings.embed_audio_max_mb),
-                           file_name=f"repassist_{sid}.html", mime="text/html")
+        st.info("Press START above to begin a live session.")
+
+
+def tab_upload(mgr: SessionManager, configs: list) -> None:
+    cfg, name, language, consent = session_form("upload", configs)
+    up = st.file_uploader("Upload recording", type=["wav", "mp3", "aiff", "aif", "aac", "ogg", "flac"])
+    if st.button("Start analysis", type="primary", disabled=not consent or not up):
+        sid = start(mgr, name, cfg, language, up.name, up.getvalue())
+        if sid:
+            st.session_state["upload_sid"] = sid
+            rt = mgr.runtime(sid)
+            audio = mgr.store.session_dir(sid) / rt.session.audio_file
+            st.audio(audio.read_bytes(), format=rt.session.audio_mime or "audio/wav")
+            view = st.empty()
+            asyncio.run(run_live(mgr, sid, view))  # report fills in live, right here
+            mgr.runtimes.pop(sid, None)  # reload from disk next time (fresh event-loop state)
+            return
+    if st.session_state.get("upload_sid"):
+        show_saved(mgr, st.session_state["upload_sid"])
+    else:
+        st.info("Choose a recording and press Start analysis — the report fills in live on this page.")
+
+
+def tab_configs(mgr: SessionManager, configs: list) -> None:
+    for c in configs:
+        with st.expander(f"{c.get('name', c['id'])} — {c.get('language', 'English')}"):
+            st.write(f"Roles: {', '.join(c.get('roles', []))}")
+            for tp in c.get("topics", []):
+                st.markdown(f"**{tp.get('name', tp['id'])}**")
+                for cr in tp.get("criteria", []):
+                    st.write(f"• {cr.get('label', cr['id'])}")
+
+
+def tab_recent(mgr: SessionManager) -> None:
+    sessions = mgr.list()
+    if not sessions:
+        st.info("No sessions yet.")
+        return
+    for x in sessions:
+        c1, c2, c3 = st.columns([6, 1, 1])
+        c1.markdown(f"**{x.name}** · {x.config.get('name', '')} · {x.status.value.title()} · {x.overall_display or '0%'}")
+        if c2.button("Open", key=f"open_{x.id}"):
+            st.session_state["recent_sid"] = x.id
+        if c3.button("Delete", key=f"del_{x.id}"):
+            asyncio.run(mgr.delete(x.id))
+            st.session_state.pop("recent_sid", None)
+            st.rerun()
+    if st.session_state.get("recent_sid"):
+        st.divider()
+        show_saved(mgr, st.session_state["recent_sid"])
+
+
+def main() -> None:
+    st.markdown(CSS, unsafe_allow_html=True)
+    mgr = get_mgr()
+    st.markdown("## <span style='color:#1d4ed8'>Sales Assist</span> <span style='font-size:16px;color:#4b5563;font-weight:400'>Hotel Booking Conversation Assistant</span>", unsafe_allow_html=True)
+    if not mgr.settings.configured:
+        st.error("No GOOGLE_API_KEY / GEMINI_API_KEY found. Add it to Streamlit secrets (or .env locally).")
+        st.stop()
+    configs = mgr.configs.list()
+    if not configs:
+        st.error("No conversation configuration found.")
+        st.stop()
+    t1, t2, t3, t4 = st.tabs(["Live Session", "Upload Recording", "Configurations", "Recent Sessions"])
+    with t1:
+        tab_live(mgr, configs)
+    with t2:
+        tab_upload(mgr, configs)
+    with t3:
+        tab_configs(mgr, configs)
+    with t4:
+        tab_recent(mgr)
 
 
 main()

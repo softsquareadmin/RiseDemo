@@ -1,6 +1,6 @@
-# RepAssist — Hotel Booking Conversation Assistant
+# Sales Assist — Hotel Booking Conversation Assistant
 
-RepAssist is a **silent** real-time assistant for hotel booking agents. It listens to a conversation between a
+Sales Assist is a **silent** real-time assistant for hotel booking agents. It listens to a conversation between a
 Customer and a Hotel Booking Agent, transcribes it live, tracks which checklist items have been covered, suggests
 follow-up questions and keeps a running booking report. It never speaks, never makes reservations and never promises
 availability — the human agent stays responsible for the customer.
@@ -48,7 +48,7 @@ development because that needs a valid key. What *was* verified against the real
 The Live config differs by model family (see `LiveTranscriber._config`): a model with `transcribe` in its name gets a
 transcription-only config (language codes + diarization); any other Live model is used only for its input
 transcription, with TEXT output that is ignored and a "stay silent" instruction. If the Live endpoint rejects the
-connection (Google returns HTTP 404 both for an unknown model *and* for a bad key), RepAssist shows a model/key error
+connection (Google returns HTTP 404 both for an unknown model *and* for a bad key), Sales Assist shows a model/key error
 instead of silently substituting anything. There is no fallback provider and no simulated transcription.
 
 ## How it works
@@ -80,7 +80,7 @@ Browser mic -> AudioWorklet (16 kHz PCM16, ~100 ms frames) -> WebSocket -> Gemin
 * **Speakers.** Labels come from Gemini's diarization when the model supports it and stay neutral ("Speaker 1") until
   the role is evidenced by the conversation. Click any speaker label to correct it (applies to all segments of that
   speaker; manual corrections always win).
-* **Connection recovery.** If Gemini Live drops, RepAssist reconnects (up to 5 times, backoff), buffers about 10 s of audio,
+* **Connection recovery.** If Gemini Live drops, Sales Assist reconnects (up to 5 times, backoff), buffers about 10 s of audio,
   and tells you how much audio, if any, was lost. Auth/model/quota errors are not retried.
 * **Sessions.** `CREATED → CONNECTING → RECORDING → FINALIZING → COMPLETED` (uploads use `PROCESSING`; failures end in
   `FAILED` with a Retry that keeps the transcript). Closing the browser mid-call preserves and finalizes the transcript.
@@ -110,7 +110,7 @@ Browser mic -> AudioWorklet (16 kHz PCM16, ~100 ms frames) -> WebSocket -> Gemin
 ## Privacy
 
 * Recording consent is mandatory (live and upload).
-* **Audio and transcript text are sent to Google Gemini.** RepAssist is *not* offline and local storage is not local-only
+* **Audio and transcript text are sent to Google Gemini.** Sales Assist is *not* offline and local storage is not local-only
   AI processing. Deleting local files does **not** delete anything already processed or retained by Google under its policies.
 * Sessions are stored as JSON under `data/sessions/<id>/`. `SAVE_SESSIONS=false` keeps sessions in memory only (lost on restart,
   uploaded audio removed after processing). `RETENTION_DAYS` > 0 purges older session folders at startup.
@@ -145,7 +145,7 @@ stale/out-of-order merges, the scheduler (debounce, max wait, silence, single fl
 session lifecycle (finalize, failure + retry, no-speech, restart), the seven hotel scenarios, upload flow, export escaping,
 deletion and the HTTP/WebSocket API.
 
-**Important:** the scenario tests drive RepAssist's own logic with a *scripted stand-in* for Gemini's analysis output. They prove
+**Important:** the scenario tests drive Sales Assist's own logic with a *scripted stand-in* for Gemini's analysis output. They prove
 the scoring, validation, merging and UI plumbing — not Gemini's transcription or judgement quality. Test with a real key and
 real recordings before relying on it.
 

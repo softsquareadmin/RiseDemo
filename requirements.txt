@@ -1,4 +1,6 @@
 streamlit>=1.40
+streamlit-webrtc>=0.60
+av>=12
 google-genai>=1.0
 python-dotenv>=1.0
 pydantic>=2.7
