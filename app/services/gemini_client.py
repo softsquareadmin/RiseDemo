@@ -47,9 +47,9 @@ def classify_error(exc: BaseException, api_key: str = "") -> GeminiServiceError:
         if hs in (401, 403):
             return GeminiServiceError("auth", MESSAGES["auth"])
         if hs in (400, 404):
-            # Google answers 404 for both an unknown model and an invalid key on the Live endpoint.
-            return GeminiServiceError("model", f"Gemini Live rejected the connection (HTTP {hs}). This usually means an invalid API key, "
-                                      "or a Live model name your account cannot use. Run the connectivity check and verify LIVE_TRANSCRIPTION_MODEL in .env.")
+            # Google answers 404 for an unknown/retired model and sometimes for a bad key (REST and Live alike).
+            return GeminiServiceError("model", f"Gemini rejected the request (HTTP {hs}). Usually the model name is not available to your API key "
+                                      "(check ANALYSIS_MODEL / LIVE_TRANSCRIPTION_MODEL) or the key is invalid.")
         if hs == 429:
             return GeminiServiceError("quota", MESSAGES["quota"])
         return GeminiServiceError("network", f"Gemini Live is temporarily unavailable (HTTP {hs}).")

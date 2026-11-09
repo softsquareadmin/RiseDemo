@@ -37,7 +37,7 @@ class Settings:
         self.api_key = _key("GOOGLE_API_KEY") or _key("GEMINI_API_KEY")
         self.live_model = os.getenv("LIVE_TRANSCRIPTION_MODEL", "gemini-3.5-transcribe-live")
         self.upload_model = os.getenv("UPLOAD_TRANSCRIPTION_MODEL", "gemini-2.5-flash")
-        self.analysis_model = os.getenv("ANALYSIS_MODEL", "gemini-2.5-flash-lite")
+        self.analysis_model = os.getenv("ANALYSIS_MODEL", "gemini-3.1-flash-lite")
         self.host = os.getenv("HOST", "127.0.0.1")
         self.port = int(_num("PORT", 8000))
         self.data_dir = Path(os.getenv("REPASSIST_DATA_DIR") or (BASE_DIR / "data"))

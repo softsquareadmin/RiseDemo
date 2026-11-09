@@ -95,8 +95,9 @@ def parse_result(text: str) -> AnalysisResult:
 def _thinking(model: str):
     import os
 
-    if "flash" not in (model or "").lower():
-        return None  # pro models cannot disable thinking
+    m = (model or "").lower()
+    if "2.5" not in m or "flash" not in m:
+        return None  # only 2.5 Flash takes thinking_budget=0; Gemini 3.x Lite models are already fast without it
     try:
         return types.ThinkingConfig(thinking_budget=int(os.getenv("ANALYSIS_THINKING_BUDGET", "0")))
     except Exception:  # noqa: BLE001
