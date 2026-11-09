@@ -9,13 +9,13 @@ import uuid
 
 import streamlit as st
 
-# Streamlit Cloud secrets -> environment, before Settings() reads it.
-for _k in ("GOOGLE_API_KEY", "GEMINI_API_KEY"):
-    try:
-        if _k in st.secrets and not os.getenv(_k):
-            os.environ[_k] = str(st.secrets[_k])
-    except Exception:  # noqa: BLE001  (no secrets file locally)
-        pass
+# Streamlit Cloud secrets -> environment, before Settings() reads it (optional overrides like ANALYSIS_MODEL work too).
+try:
+    for _k in list(st.secrets):
+        if isinstance(st.secrets[_k], str) and not os.getenv(_k):
+            os.environ[_k] = st.secrets[_k]
+except Exception:  # noqa: BLE001  (no secrets file locally)
+    pass
 
 try:
     from streamlit_webrtc import WebRtcMode, webrtc_streamer
