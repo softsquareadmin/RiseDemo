@@ -56,6 +56,12 @@ CSS = """<style>
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.chip{font-size:13px;padding:3px 10px;border-radius:999px;border:1px solid #e5e7eb;background:#f9fafb;color:#6b7280}
 .chip.m{background:#e7f6ec;border-color:#bbf7d0;color:#15803d}.chip.r{background:#fef3c7;border-color:#fde68a;color:#b45309}
 .mobile-sub{display:inline}
+.snap{flex-basis:100%;color:#374151;font-size:15px;order:5}.snap .u{color:#b45309}
+.nba{background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb}.nba .top{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px}
+.nba .top .sec{margin:0;color:#1d4ed8}.nba .q{font-size:16px;padding:4px 0;color:#111827}.nba .q.rv{color:#92400e}
+.nba .tg{display:inline-block;font-size:12px;font-weight:700;border-radius:999px;padding:1px 9px;margin-right:6px;background:#dbeafe;color:#1d4ed8}.nba .q.rv .tg{background:#fde68a;color:#92400e}
+.crit{flex-wrap:wrap;gap:4px 10px}.crit .cl{font-weight:600}.crit .cv{color:#1d4ed8}.crit .cf{font-size:12px;font-weight:700;color:#b45309;background:#fef3c7;border-radius:999px;padding:1px 8px}
+.crit .cp{color:#9ca3af;font-size:13px}.line{font-size:14px;color:#374151;margin-top:6px}.line b{color:#15803d}
 @media (max-width:640px){
   .block-container{padding:3.2rem .7rem 120px .7rem!important}
   h2{font-size:1.5rem!important}.mobile-sub{display:none}
@@ -129,18 +135,24 @@ def is_mobile() -> bool:
 
 
 def _ask_list(questions: list, limit: int) -> list:
-    """Questions to show, dropping near-duplicates (e.g. 'name of the primary guest for this/the reservation')."""
+    """Questions to show (dicts with label/question/needs_review), dropping near-duplicate wording."""
     out, seen = [], []
     for q in questions:
-        text = str(q.get("question", q) if isinstance(q, dict) else q)
-        words = set(re.sub(r"[^\w\s]", " ", text.lower()).split())
+        q = q if isinstance(q, dict) else {"question": str(q)}
+        words = set(re.sub(r"[^\w\s]", " ", str(q.get("question", "")).lower()).split())
         if any(len(words & s) / max(1, len(words | s)) >= 0.7 for s in seen):
             continue
         seen.append(words)
-        out.append(text)
+        out.append(q)
         if len(out) >= limit:
             break
     return out
+
+
+# criterion id -> booking field, used when the configuration does not set `booking_field` itself
+BOOKING_FOR = {"check_in_date": "check_in_date", "check_out_date": "check_out_date", "number_of_nights": "nights", "number_of_rooms": "rooms",
+               "primary_guest_name": "customer_name", "customer_name": "customer_name", "room_type": "room_type", "room_rate": "room_rate",
+               "total_estimated_cost": "total_estimated_cost", "contact_number": "contact_number", "email_address": "email"}
 
 
 def _transcript_html(s, interim) -> str:
@@ -154,85 +166,131 @@ def _transcript_html(s, interim) -> str:
     return f'<div class="card"><div class="sec">LIVE TRANSCRIPT</div><div class="tr">{rows}</div></div>'
 
 
-def _topics_html(cov: dict, mobile: bool) -> str:
+def _booking_rows(d: dict) -> dict:
+    """Known booking values keyed by field (the 'Not discussed' rows are dropped)."""
+    return {r["key"]: r for sec in d["report"]["sections"] for r in sec["rows"] if r["known"]}
+
+
+def _snapshot(brow: dict) -> str:
+    """One line of what is known so far: guest, dates, rooms."""
+    def v(k):
+        r = brow.get(k)
+        if not r:
+            return ""
+        return e(r["value"]) + ("" if r["confirmed"] else ' <span class="u">(to confirm)</span>')
+
+    parts = []
+    if v("customer_name"):
+        parts.append("👤 " + v("customer_name"))
+    if v("check_in_date") or v("check_out_date"):
+        parts.append("📅 " + (v("check_in_date") or "?") + " → " + (v("check_out_date") or "?")
+                     + (f" ({e(brow['nights']['value'])} nights)" if brow.get("nights") else ""))
+    elif brow.get("nights"):
+        parts.append(f"📅 {e(brow['nights']['value'])} nights")
+    if v("rooms"):
+        parts.append("🛏 " + v("rooms") + " room(s)" + (f" · {v('room_type')}" if v("room_type") else ""))
+    elif v("room_type"):
+        parts.append("🛏 " + v("room_type"))
+    if v("contact_number"):
+        parts.append("📞 " + v("contact_number"))
+    return " · ".join(parts)
+
+
+def _checklist_html(cov: dict, brow: dict, config: dict) -> str:
+    """Topic coverage and booking values in ONE list: each criterion shows its captured value."""
+    bf = {c["id"]: c.get("booking_field") for tp in config.get("topics", []) for c in tp.get("criteria", [])}
+    used = set()
     out = ""
     for t in cov["topics"]:
-        sub = f'<div class="sub"><span>{t["met"]} of {t["applicable"]} criteria completed</span><span class="tag">{e(t["status"])}</span></div>'
-        if mobile:  # compact: every criterion as a chip (green = covered, grey = still missing, amber = review)
-            chips = "".join(
-                f'<span class="chip {"m" if c["status"] == "MET" else "r" if c["status"] == "NEEDS_REVIEW" else ""}">'
-                f'{"✓" if c["status"] == "MET" else "!" if c["status"] == "NEEDS_REVIEW" else "○"} {e(c["label"])}</span>'
-                for c in t["criteria"])
-            body = f'<div class="chips">{chips}</div>'
+        items = []
+        for c in t["criteria"]:
+            key = bf.get(c["id"]) or BOOKING_FOR.get(c["id"])
+            row = brow.get(key) if key else None
+            ev = c.get("evidence") or {}
+            value = row["value"] if row else ""
+            if row:
+                used.add(key)
+            elif c["status"] == "MET" and ev.get("text"):
+                value = "“" + ev["text"][:70] + ("…" if len(ev["text"]) > 70 else "") + "”"
+            confirm = c["status"] == "NEEDS_REVIEW" or bool(row and not row["confirmed"] and c["status"] != "MET")
+            prev = row["previous"][-1] if row and row.get("previous") else ""
+            items.append((c, value, confirm, prev, ev))
+        status = t["status"]
+        if status == "Complete":  # finished topics shrink to one line
+            line = " · ".join(f'{e(c["label"])}' + (f': <b>{e(v)}</b>' if v else "") for c, v, _, _, _ in items)
+            body = f'<div class="line">✓ {line}</div>'
+        elif status == "Not Started":
+            body = '<div class="chips">' + "".join(f'<span class="chip">○ {e(c["label"])}</span>' for c, *_ in items) + "</div>"
         else:
-            body = "".join(
-                f'<div class="crit"><span class="{"ok" if c["status"] == "MET" else "rv" if c["status"] == "NEEDS_REVIEW" else "no"}">'
-                f'{"✓" if c["status"] == "MET" else "!" if c["status"] == "NEEDS_REVIEW" else "○"}</span>{e(c["label"])}</div>'
-                for c in t["criteria"] if t["met"] or t["status"] != "Not Started")
+            body = ""
+            for c, value, confirm, prev, ev in items:
+                icon, cls = ("✓", "ok") if c["status"] == "MET" else ("!", "rv") if c["status"] == "NEEDS_REVIEW" else ("○", "no")
+                tip = f' title="{e(ev.get("text", ""))} (heard {e(ev.get("timestamp", ""))})"' if ev.get("text") else ""
+                body += (f'<div class="crit"{tip}><span class="{cls}">{icon}</span><span class="cl">{e(c["label"])}</span>'
+                         + (f'<span class="cv">{e(value)}</span>' if value else "")
+                         + (f'<span class="cp">was {e(prev)}</span>' if prev else "")
+                         + ('<span class="cf">to confirm</span>' if confirm else "") + "</div>")
         out += (f'<div class="topic"><div class="row"><span>{e(t["name"])}</span><span>{e(t["display"])}</span></div>'
-                f'<div class="bar"><i style="width:{t["percent"] or 0}%"></i></div>{sub}{body}</div>')
-    return f'<div class="card"><div class="sec">TOPIC COVERAGE</div>{out}</div>'
+                f'<div class="bar"><i style="width:{t["percent"] or 0}%"></i></div>'
+                f'<div class="sub"><span>{t["met"]} of {t["applicable"]} criteria completed</span><span class="tag">{e(status)}</span></div>{body}</div>')
+    extra = [r for k, r in brow.items() if k not in used and k not in ("customer_name",)]
+    if extra:
+        out += ('<div class="topic"><div class="sub"><span>Also captured</span></div><div class="chips">'
+                + "".join(f'<span class="chip m">{e(r["label"])}: {e(r["value"])}</span>' for r in extra) + "</div></div>")
+    return f'<div class="card"><div class="sec">CHECKLIST</div>{out}</div>'
 
 
-def _details(d: dict, s, mobile: bool) -> None:
-    """Summary / booking details / suggested questions (collapsed on phones to save scrolling)."""
-    def box(title):
-        return st.expander(title, expanded=not mobile)
-
-    def summary():
-        with box("Summary & next action"):
-            st.write(s.summary or "No summary yet.")
-            st.markdown(f"**Booking status:** {s.booking_status}  \n**Next action:** {s.next_action or '-'}")
-
-    def booking():
-        with box("Booking details"):
-            for sec in d["report"]["sections"]:
-                st.markdown(f"**{sec['title']}**")
-                for r in sec["rows"]:
-                    st.write(f"{r['label']}: {r['value']}" + (" ✅" if r["confirmed"] else ""))
-
-    def questions():
-        with box("Suggested questions & outstanding"):
-            for q in _ask_list(d["questions"], 5):
-                st.write("• " + q)
-            for o in d["report"]["outstanding"]:
-                st.write(f"• {o['topic']}: {o['label']}")
-
-    if mobile:
-        summary(), booking(), questions()
+def _next_action_html(d: dict, s) -> str:
+    """ONE card for what to do next: questions (confirmations first), booking status, follow-up when finished."""
+    chip = f'<span class="pill gray">{e(s.booking_status)}</span>' if s.booking_status != "Unknown" else ""
+    if s.finalized:
+        text = e(s.next_action or "Review the conversation and follow up with the customer.")
+        return f'<div class="card nba"><div class="top"><span class="sec">FOLLOW-UP</span>{chip}</div><div class="q">{text}</div></div>'
+    qs = _ask_list(d["questions"], 3)
+    if qs:
+        body = "".join(f'<div class="q{" rv" if q.get("needs_review") else ""}"><span class="tg">{e(q.get("label", "Ask"))}</span>{e(q["question"])}</div>' for q in qs)
     else:
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            summary()
-        with c2:
-            booking()
-        with c3:
-            questions()
+        body = f'<div class="q">{e(s.next_action) if s.next_action else "All checklist items are covered ✓"}</div>'
+    return f'<div class="card nba"><div class="top"><span class="sec">NEXT BEST ACTION</span>{chip}</div>{body}</div>'
+
+
+def _summary_box(s, mobile: bool) -> None:
+    if not (s.summary or s.finalized):
+        return  # nothing useful to say yet
+    with st.expander("Final report" if s.finalized else "Call summary", expanded=s.finalized or not mobile):
+        st.write(s.summary or "No summary available.")
+        if s.finalized:
+            fr = report_service.final_report(s)
+            st.markdown(f"**Outcome:** {fr['outcome']}")
+            if fr["missing_information"]:
+                st.markdown("**Missing information**\n" + "\n".join(f"- {x}" for x in fr["missing_information"]))
+            if fr["questions_not_asked"]:
+                st.markdown("**Questions not asked**\n" + "\n".join(f"- {x}" for x in fr["questions_not_asked"]))
 
 
 def render_live(session, interim=None, elapsed: float = 0.0) -> None:
-    """Draw the whole report for the session's current state (called repeatedly while processing).
+    """Draw the report for the session's current state (called repeatedly while processing).
 
-    Desktop: transcript left, coverage right, details below.
-    Phone:   header -> overall -> ask next -> topic coverage -> details -> transcript (last)."""
+    Every fact appears once. Desktop: transcript left, checklist right. Phone: checklist first, transcript last."""
     s = session
     mobile = is_mobile()
     d = report_service.dashboard(s)
     cov = d["coverage"]
     ov = cov["overall"]
+    brow = _booking_rows(d)
     status = s.status.value
     pill = {"COMPLETED": ("Completed", "green"), "FAILED": ("Failed", "red")}.get(status, (status.title(), "amber"))
     final = ("Final results", "green") if s.finalized else ("Live provisional analysis", "amber")
     last = s.segments[-1].start if s.segments else 0
-    ask = _ask_list(d["questions"], 2)
-    ask_html = ('<div class="card ask"><div class="sec">ASK NEXT</div>' + "".join(f'<div class="q">• {e(q)}</div>' for q in ask) + "</div>") if ask and not s.finalized else ""
+    snap = _snapshot(brow)
     st.markdown(
         f'<div class="card hdr"><b>{e(s.name)}</b><span class="cfg">{e(s.config.get("name", ""))}</span>'
         f'<span class="time">{fmt_ts(max(s.duration_s, last, elapsed))}</span>'
-        f'<span class="pill {pill[1]}">{e(pill[0])}</span><span class="pill {final[1]}">{final[0]}</span></div>'
+        f'<span class="pill {pill[1]}">{e(pill[0])}</span><span class="pill {final[1]}">{final[0]}</span>'
+        + (f'<div class="snap">{snap}</div>' if snap else "") + "</div>"
         f'<div class="card"><span style="font-size:19px">Overall Coverage: <b>{e(ov["display"])}</b> '
         f'<span style="color:#6b7280">{ov["met"]} of {ov["applicable"]} applicable criteria met</span></span>'
-        f'<div class="bar"><i style="width:{ov["percent"] or 0}%"></i></div></div>' + ask_html,
+        f'<div class="bar"><i style="width:{ov["percent"] or 0}%"></i></div></div>' + _next_action_html(d, s),
         unsafe_allow_html=True,
     )
     if s.error:
@@ -240,29 +298,25 @@ def render_live(session, interim=None, elapsed: float = 0.0) -> None:
     for w in s.warnings:
         st.warning(w)
 
-    runs = (s.timings or {}).get("analysis", [])
-    timing = None
-    if runs or "first_transcript_ms" in (s.timings or {}):
-        lr = runs[-1] if runs else {}
-        timing = (f"⏱ speech→first transcript: {(s.timings or {}).get('first_transcript_ms', '–')} ms · "
-                  f"last analysis: waited {lr.get('segments_to_request_ms', '–')} ms, Gemini took {lr.get('request_ms', '–')} ms · "
-                  f"{len(runs)} analysis run(s)")
-
+    checklist = _checklist_html(cov, brow, s.config)
     if mobile:
-        st.markdown(_topics_html(cov, True), unsafe_allow_html=True)
-        _details(d, s, True)
-        if timing:
-            st.caption(timing)
+        st.markdown(checklist, unsafe_allow_html=True)
+        _summary_box(s, True)
         st.markdown(_transcript_html(s, interim), unsafe_allow_html=True)
-        return
-    left, right = st.columns(2)
-    with left:
-        st.markdown(_transcript_html(s, interim), unsafe_allow_html=True)
-    with right:
-        st.markdown(_topics_html(cov, False), unsafe_allow_html=True)
-    if timing:
-        st.caption(timing)
-    _details(d, s, False)
+    else:
+        left, right = st.columns(2)
+        with left:
+            st.markdown(_transcript_html(s, interim), unsafe_allow_html=True)
+        with right:
+            st.markdown(checklist, unsafe_allow_html=True)
+        _summary_box(s, False)
+
+    runs = (s.timings or {}).get("analysis", [])
+    if str(st.query_params.get("debug", "")) and (runs or "first_transcript_ms" in (s.timings or {})):  # diagnostics: add ?debug=1
+        lr = runs[-1] if runs else {}
+        st.caption(f"⏱ speech→first transcript: {(s.timings or {}).get('first_transcript_ms', '–')} ms · "
+                   f"last analysis: waited {lr.get('segments_to_request_ms', '–')} ms, Gemini took {lr.get('request_ms', '–')} ms · "
+                   f"{len(runs)} analysis run(s)")
 
 
 async def run_live(mgr: SessionManager, sid: str, view) -> None:

@@ -35,6 +35,8 @@ Hard rules:
 10. suggested_questions: short, polite, actionable follow-ups for criteria that are not yet MET or NOT_APPLICABLE (most important first, at most 5). Never assume unavailable inventory, invented prices or unconfirmed bookings.
 11. booking_updates field names (use these when applicable): customer_name, check_in_date, check_out_date, nights, adults, children, rooms, room_type, bed_preference, special_requests, availability_discussed, room_rate, additional_charges, total_estimated_cost, contact_number, email, payment_info. value must be a short string exactly as established.
 12. report_update.booking_status must be one of: Inquiry, Options Discussed, Pending Confirmation, Confirmed, Declined, Follow-up Required - or empty if unsupported. report_update.summary is a concise running summary of the whole conversation so far (max ~80 words). recommended_next_action is ONE clear action.
+13. DATES. The payload has conversation_date (today, with weekday). Resolve relative dates the customer says ("tomorrow", "day after tomorrow", "next Friday", "this weekend") to absolute dates relative to conversation_date, and store date values in booking_updates as "DD Mon YYYY (Weekday)", e.g. "13 Nov 2026 (Fri)". If the wording is too vague to resolve (e.g. "sometime next week"), do not guess: use NEEDS_REVIEW with a reason and ask for the exact date.
+14. CALCULATED DATES. If two of {check-in date, check-out date, number of nights} are known and the third was not stated, calculate it (check-out = check-in + nights; nights = check-out - check-in; check-in = check-out - nights; mind month lengths and leap years). A calculated value is NOT confirmed: write it in booking_updates with confirmed=false (cite the segment that supplied the inputs), set that criterion to NEEDS_REVIEW with reason "Calculated from <inputs>; not yet confirmed by the customer", and add a high-priority suggested_question that STATES the calculated date and asks to confirm, e.g. "Check-in 12 Nov for 2 nights means check-out on 14 Nov (Fri) - shall I confirm that date?". Mark it MET only when the customer says that date, or clearly agrees to the agent stating it (cite that segment). If the customer corrects it, use the corrected value and recompute any other calculated value. Number of Nights may be MET when check-in and check-out are both explicitly stated.
 
 Return ONLY a JSON object with this shape:
 {
@@ -55,7 +57,20 @@ def _seg_line(s) -> dict:
     return {"id": s.id, "speaker": s.speaker, "speaker_key": s.speaker_key, "time": fmt_ts(s.start), "text": s.text}
 
 
-def build_prompt(session: Session, new_segments: list, context_segments: list, final: bool) -> str:
+def _call_date(session: Session, tz: str) -> str:
+    """Date the conversation took place, with weekday, in the business timezone (lets the model resolve 'tomorrow')."""
+    from datetime import datetime, timezone
+
+    try:
+        from zoneinfo import ZoneInfo
+
+        dt = datetime.fromisoformat(session.created_at).astimezone(ZoneInfo(tz))
+    except Exception:  # noqa: BLE001
+        dt = datetime.fromisoformat(session.created_at).astimezone(timezone.utc)
+    return dt.strftime("%A, %d %B %Y")
+
+
+def build_prompt(session: Session, new_segments: list, context_segments: list, final: bool, tz: str = "Asia/Kolkata") -> str:
     checklist = [
         {"topic_id": t["id"], "criterion_id": c["id"], "label": c["label"], "instruction": c.get("instruction", "")}
         for t in session.config["topics"]
@@ -70,6 +85,7 @@ def build_prompt(session: Session, new_segments: list, context_segments: list, f
     payload = {
         "session_id": session.id,
         "language": session.language,
+        "conversation_date": _call_date(session, tz),
         "roles": session.config.get("roles", []),
         "checklist": checklist,
         "current_criterion_states_other_than_NOT_MET": state,
@@ -112,7 +128,7 @@ class GeminiAnalysis:
         """Return a validated AnalysisResult. Raises GeminiServiceError on service/validation failure."""
         s = self.gemini.settings
         system = SYSTEM + "\n" + LANG_RULES.get(session.language, LANG_RULES["English"]) + (FINAL_ADDENDUM if final else "")
-        prompt = build_prompt(session, new_segments, context_segments, final)
+        prompt = build_prompt(session, new_segments, context_segments, final, s.timezone)
         cfg = types.GenerateContentConfig(
             system_instruction=system,
             response_mime_type="application/json",

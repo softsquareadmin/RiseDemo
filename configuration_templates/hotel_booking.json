@@ -17,21 +17,24 @@
           "label": "Check-in Date",
           "instruction": "Customer's intended arrival date is clearly established. A tentative date is not confirmed.",
           "question": "Could you confirm your check-in date?",
-          "priority": "high"
+          "priority": "high",
+          "booking_field": "check_in_date"
         },
         {
           "id": "check_out_date",
           "label": "Check-out Date",
-          "instruction": "Customer's intended departure date is clearly established.",
+          "instruction": "Customer's intended departure date is clearly established. A date calculated from check-in plus number of nights counts only after the customer confirms it.",
           "question": "Could you confirm your check-out date?",
-          "priority": "high"
+          "priority": "high",
+          "booking_field": "check_out_date"
         },
         {
           "id": "number_of_nights",
           "label": "Number of Nights",
           "instruction": "Length of stay is established, or correctly derived from confirmed dates.",
           "question": "Could you confirm the total number of nights?",
-          "priority": "high"
+          "priority": "high",
+          "booking_field": "nights"
         },
         {
           "id": "date_confirmation",
@@ -51,14 +54,16 @@
           "label": "Number of Rooms",
           "instruction": "Required room count is established. Do not infer guest count from room count.",
           "question": "How many rooms would you like to book?",
-          "priority": "high"
+          "priority": "high",
+          "booking_field": "rooms"
         },
         {
           "id": "primary_guest_name",
-          "label": "Primary Guest Name",
-          "instruction": "Name of the primary guest is collected.",
-          "question": "May I have the name of the primary guest?",
-          "priority": "high"
+          "label": "Guest Name",
+          "instruction": "Name of the guest or booking contact is collected.",
+          "question": "May I have the name for the booking?",
+          "priority": "high",
+          "booking_field": "customer_name"
         }
       ]
     },
@@ -71,7 +76,8 @@
           "label": "Room Type",
           "instruction": "Preferred room category is discussed.",
           "question": "Do you have a preferred room type?",
-          "priority": "medium"
+          "priority": "medium",
+          "booking_field": "room_type"
         }
       ]
     },
@@ -84,14 +90,16 @@
           "label": "Room Rate",
           "instruction": "The applicable room rate is communicated by the agent. Never invent rates.",
           "question": "Would you like me to go through the room rate?",
-          "priority": "medium"
+          "priority": "medium",
+          "booking_field": "room_rate"
         },
         {
           "id": "total_estimated_cost",
           "label": "Total Estimated Cost",
           "instruction": "Total estimated stay cost is communicated or clearly established.",
           "question": "May I confirm the total estimated cost with you?",
-          "priority": "medium"
+          "priority": "medium",
+          "booking_field": "total_estimated_cost"
         },
         {
           "id": "price_acknowledgement",
@@ -127,18 +135,12 @@
       "name": "Contact and Reservation Details",
       "criteria": [
         {
-          "id": "customer_name",
-          "label": "Customer Name",
-          "instruction": "Booking contact name is collected.",
-          "question": "May I have the name for the booking?",
-          "priority": "high"
-        },
-        {
           "id": "contact_number",
           "label": "Contact Number",
           "instruction": "Customer contact number is collected or confirmed.",
           "question": "What is the best contact number for you?",
-          "priority": "high"
+          "priority": "high",
+          "booking_field": "contact_number"
         }
       ]
     },

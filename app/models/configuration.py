@@ -28,6 +28,7 @@ class Criterion(BaseModel):
     instruction: str = ""
     description: str = ""
     question: str = ""  # optional default follow-up question
+    booking_field: str = ""  # optional: booking record field whose value this criterion shows (e.g. check_in_date)
     priority: Literal["high", "medium", "low"] = "medium"
 
     @field_validator("label")
