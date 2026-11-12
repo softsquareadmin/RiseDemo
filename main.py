@@ -3,6 +3,7 @@ import asyncio
 import copy
 import html
 import os
+import re
 import threading
 import time
 import uuid
@@ -51,6 +52,22 @@ CSS = """<style>
 .stTabs [data-baseweb="tab"] p{font-size:18px;font-weight:500;color:#1f2937}
 .stTabs [aria-selected="true"]{background:#eff6ff}.stTabs [aria-selected="true"] p{color:#1d4ed8;font-weight:700}
 .stTabs [data-baseweb="tab-highlight"],.stTabs [data-baseweb="tab-border"]{display:none}
+.ask{background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb}.ask .sec{color:#1d4ed8;margin-bottom:6px}.ask .q{font-size:16px;padding:3px 0;color:#111827}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.chip{font-size:13px;padding:3px 10px;border-radius:999px;border:1px solid #e5e7eb;background:#f9fafb;color:#6b7280}
+.chip.m{background:#e7f6ec;border-color:#bbf7d0;color:#15803d}.chip.r{background:#fef3c7;border-color:#fde68a;color:#b45309}
+.mobile-sub{display:inline}
+@media (max-width:640px){
+  .block-container{padding:3.2rem .7rem 120px .7rem!important}
+  h2{font-size:1.5rem!important}.mobile-sub{display:none}
+  .card{padding:11px 13px;margin-bottom:10px;border-radius:12px}
+  .hdr{gap:8px}.hdr b{font-size:17px}.hdr .cfg{font-size:14px;flex-basis:100%;order:3}.hdr .time{font-size:17px}.pill{padding:3px 10px;font-size:12.5px}
+  .tr{height:340px}.seg{font-size:14.5px}.topic{padding:8px 0}.topic .row{font-size:16px}
+  .stTabs [data-baseweb="tab-list"]{padding:5px 6px;gap:2px;overflow-x:auto}
+  .stTabs [data-baseweb="tab"]{padding:8px 10px}.stTabs [data-baseweb="tab"] p{font-size:14.5px}
+  /* floating START / STOP bar: always reachable while scrolling the report */
+  .st-key-live_ctrl{position:fixed;left:8px;right:84px;bottom:10px;z-index:1000;background:#fff;border:1px solid #cbd5e1;
+    border-radius:14px;padding:2px 10px;box-shadow:0 6px 20px rgba(15,23,42,.22)}
+}
 </style>"""
 
 
@@ -99,9 +116,107 @@ def e(x) -> str:
     return html.escape(str(x))
 
 
+def is_mobile() -> bool:
+    """Phone layout: ?layout=mobile|desktop overrides, otherwise detect from the browser's User-Agent."""
+    try:
+        forced = str(st.query_params.get("layout", "")).lower()
+        if forced in ("mobile", "desktop"):
+            return forced == "mobile"
+        ua = (st.context.headers.get("User-Agent") or "").lower()
+        return any(k in ua for k in ("iphone", "android", "ipod", "mobile"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _ask_list(questions: list, limit: int) -> list:
+    """Questions to show, dropping near-duplicates (e.g. 'name of the primary guest for this/the reservation')."""
+    out, seen = [], []
+    for q in questions:
+        text = str(q.get("question", q) if isinstance(q, dict) else q)
+        words = set(re.sub(r"[^\w\s]", " ", text.lower()).split())
+        if any(len(words & s) / max(1, len(words | s)) >= 0.7 for s in seen):
+            continue
+        seen.append(words)
+        out.append(text)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _transcript_html(s, interim) -> str:
+    rows = "".join(
+        f'<div class="seg{" alt" if i % 2 else ""}"><span class="ts">[{fmt_ts(g.start)}]</span>'
+        f'<span class="sp">{e(g.speaker)}:</span><br>{e(g.text)}</div>' for i, g in enumerate(s.segments))
+    if interim:
+        rows += f'<div class="seg" style="opacity:.6"><span class="sp">{e(interim["speaker"])}:</span><br><i>{e(interim["text"])}</i></div>'
+    if not rows:
+        rows = '<div style="color:#6b7280">Transcript will appear here as people speak…</div>'
+    return f'<div class="card"><div class="sec">LIVE TRANSCRIPT</div><div class="tr">{rows}</div></div>'
+
+
+def _topics_html(cov: dict, mobile: bool) -> str:
+    out = ""
+    for t in cov["topics"]:
+        sub = f'<div class="sub"><span>{t["met"]} of {t["applicable"]} criteria completed</span><span class="tag">{e(t["status"])}</span></div>'
+        if mobile:  # compact: every criterion as a chip (green = covered, grey = still missing, amber = review)
+            chips = "".join(
+                f'<span class="chip {"m" if c["status"] == "MET" else "r" if c["status"] == "NEEDS_REVIEW" else ""}">'
+                f'{"✓" if c["status"] == "MET" else "!" if c["status"] == "NEEDS_REVIEW" else "○"} {e(c["label"])}</span>'
+                for c in t["criteria"])
+            body = f'<div class="chips">{chips}</div>'
+        else:
+            body = "".join(
+                f'<div class="crit"><span class="{"ok" if c["status"] == "MET" else "rv" if c["status"] == "NEEDS_REVIEW" else "no"}">'
+                f'{"✓" if c["status"] == "MET" else "!" if c["status"] == "NEEDS_REVIEW" else "○"}</span>{e(c["label"])}</div>'
+                for c in t["criteria"] if t["met"] or t["status"] != "Not Started")
+        out += (f'<div class="topic"><div class="row"><span>{e(t["name"])}</span><span>{e(t["display"])}</span></div>'
+                f'<div class="bar"><i style="width:{t["percent"] or 0}%"></i></div>{sub}{body}</div>')
+    return f'<div class="card"><div class="sec">TOPIC COVERAGE</div>{out}</div>'
+
+
+def _details(d: dict, s, mobile: bool) -> None:
+    """Summary / booking details / suggested questions (collapsed on phones to save scrolling)."""
+    def box(title):
+        return st.expander(title, expanded=not mobile)
+
+    def summary():
+        with box("Summary & next action"):
+            st.write(s.summary or "No summary yet.")
+            st.markdown(f"**Booking status:** {s.booking_status}  \n**Next action:** {s.next_action or '-'}")
+
+    def booking():
+        with box("Booking details"):
+            for sec in d["report"]["sections"]:
+                st.markdown(f"**{sec['title']}**")
+                for r in sec["rows"]:
+                    st.write(f"{r['label']}: {r['value']}" + (" ✅" if r["confirmed"] else ""))
+
+    def questions():
+        with box("Suggested questions & outstanding"):
+            for q in _ask_list(d["questions"], 5):
+                st.write("• " + q)
+            for o in d["report"]["outstanding"]:
+                st.write(f"• {o['topic']}: {o['label']}")
+
+    if mobile:
+        summary(), booking(), questions()
+    else:
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            summary()
+        with c2:
+            booking()
+        with c3:
+            questions()
+
+
 def render_live(session, interim=None, elapsed: float = 0.0) -> None:
-    """Draw the whole report for the session's current state (called repeatedly while processing)."""
+    """Draw the whole report for the session's current state (called repeatedly while processing).
+
+    Desktop: transcript left, coverage right, details below.
+    Phone:   header -> overall -> ask next -> topic coverage -> details -> transcript (last)."""
     s = session
+    mobile = is_mobile()
     d = report_service.dashboard(s)
     cov = d["coverage"]
     ov = cov["overall"]
@@ -109,13 +224,15 @@ def render_live(session, interim=None, elapsed: float = 0.0) -> None:
     pill = {"COMPLETED": ("Completed", "green"), "FAILED": ("Failed", "red")}.get(status, (status.title(), "amber"))
     final = ("Final results", "green") if s.finalized else ("Live provisional analysis", "amber")
     last = s.segments[-1].start if s.segments else 0
+    ask = _ask_list(d["questions"], 2)
+    ask_html = ('<div class="card ask"><div class="sec">ASK NEXT</div>' + "".join(f'<div class="q">• {e(q)}</div>' for q in ask) + "</div>") if ask and not s.finalized else ""
     st.markdown(
         f'<div class="card hdr"><b>{e(s.name)}</b><span class="cfg">{e(s.config.get("name", ""))}</span>'
         f'<span class="time">{fmt_ts(max(s.duration_s, last, elapsed))}</span>'
         f'<span class="pill {pill[1]}">{e(pill[0])}</span><span class="pill {final[1]}">{final[0]}</span></div>'
         f'<div class="card"><span style="font-size:19px">Overall Coverage: <b>{e(ov["display"])}</b> '
         f'<span style="color:#6b7280">{ov["met"]} of {ov["applicable"]} applicable criteria met</span></span>'
-        f'<div class="bar"><i style="width:{ov["percent"] or 0}%"></i></div></div>',
+        f'<div class="bar"><i style="width:{ov["percent"] or 0}%"></i></div></div>' + ask_html,
         unsafe_allow_html=True,
     )
     if s.error:
@@ -123,54 +240,29 @@ def render_live(session, interim=None, elapsed: float = 0.0) -> None:
     for w in s.warnings:
         st.warning(w)
 
-    left, right = st.columns(2)
-    with left:
-        if s.segments:
-            rows = "".join(
-                f'<div class="seg{" alt" if i % 2 else ""}"><span class="ts">[{fmt_ts(g.start)}]</span>'
-                f'<span class="sp">{e(g.speaker)}:</span><br>{e(g.text)}</div>' for i, g in enumerate(s.segments))
-        else:
-            rows = ""
-        if interim:
-            rows += f'<div class="seg" style="opacity:.6"><span class="sp">{e(interim["speaker"])}:</span><br><i>{e(interim["text"])}</i></div>'
-        if not rows:
-            rows = '<div style="color:#6b7280">Transcript will appear here as people speak…</div>'
-        st.markdown(f'<div class="card"><div class="sec">LIVE TRANSCRIPT</div><div class="tr">{rows}</div></div>', unsafe_allow_html=True)
-    with right:
-        topics = ""
-        for t in cov["topics"]:
-            crits = "".join(
-                f'<div class="crit"><span class="{"ok" if c["status"] == "MET" else "rv" if c["status"] == "NEEDS_REVIEW" else "no"}">'
-                f'{"✓" if c["status"] == "MET" else "!" if c["status"] == "NEEDS_REVIEW" else "○"}</span>{e(c["label"])}</div>'
-                for c in t["criteria"] if t["met"] or t["status"] != "Not Started")
-            topics += (f'<div class="topic"><div class="row"><span>{e(t["name"])}</span><span>{e(t["display"])}</span></div>'
-                       f'<div class="bar"><i style="width:{t["percent"] or 0}%"></i></div>'
-                       f'<div class="sub"><span>{t["met"]} of {t["applicable"]} criteria completed</span><span class="tag">{e(t["status"])}</span></div>{crits}</div>')
-        st.markdown(f'<div class="card"><div class="sec">TOPIC COVERAGE</div>{topics}</div>', unsafe_allow_html=True)
-
     runs = (s.timings or {}).get("analysis", [])
+    timing = None
     if runs or "first_transcript_ms" in (s.timings or {}):
         lr = runs[-1] if runs else {}
-        st.caption(f"⏱ speech→first transcript: {(s.timings or {}).get('first_transcript_ms', '–')} ms · "
-                   f"last analysis: waited {lr.get('segments_to_request_ms', '–')} ms, Gemini took {lr.get('request_ms', '–')} ms · "
-                   f"{len(runs)} analysis run(s)")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        with st.expander("Summary & next action", expanded=True):
-            st.write(s.summary or "No summary yet.")
-            st.markdown(f"**Booking status:** {s.booking_status}  \n**Next action:** {s.next_action or '-'}")
-    with c2:
-        with st.expander("Booking details", expanded=True):
-            for sec in d["report"]["sections"]:
-                st.markdown(f"**{sec['title']}**")
-                for r in sec["rows"]:
-                    st.write(f"{r['label']}: {r['value']}" + (" ✅" if r["confirmed"] else ""))
-    with c3:
-        with st.expander("Suggested questions & outstanding", expanded=True):
-            for q in d["questions"]:
-                st.write("• " + str(q.get("question", q.get("text", q)) if isinstance(q, dict) else q))
-            for o in d["report"]["outstanding"]:
-                st.write(f"• {o['topic']}: {o['label']}")
+        timing = (f"⏱ speech→first transcript: {(s.timings or {}).get('first_transcript_ms', '–')} ms · "
+                  f"last analysis: waited {lr.get('segments_to_request_ms', '–')} ms, Gemini took {lr.get('request_ms', '–')} ms · "
+                  f"{len(runs)} analysis run(s)")
+
+    if mobile:
+        st.markdown(_topics_html(cov, True), unsafe_allow_html=True)
+        _details(d, s, True)
+        if timing:
+            st.caption(timing)
+        st.markdown(_transcript_html(s, interim), unsafe_allow_html=True)
+        return
+    left, right = st.columns(2)
+    with left:
+        st.markdown(_transcript_html(s, interim), unsafe_allow_html=True)
+    with right:
+        st.markdown(_topics_html(cov, False), unsafe_allow_html=True)
+    if timing:
+        st.caption(timing)
+    _details(d, s, False)
 
 
 async def run_live(mgr: SessionManager, sid: str, view) -> None:
@@ -235,8 +327,9 @@ def tab_live(mgr: SessionManager, configs: list) -> None:
     h, loop = live_holder(), bg_loop()
     cfg, name, language, consent = session_form("live", configs)
     st.caption("Press START and allow the microphone — the report updates while people speak. Press STOP to finalize.")
-    ctx = webrtc_streamer(key="sales-assist-live", mode=WebRtcMode.SENDONLY, audio_frame_callback=on_audio,
-                          media_stream_constraints={"audio": True, "video": False}, rtc_configuration=RTC)
+    with st.container(key="live_ctrl"):  # floats at the bottom on phones so STOP is always reachable
+        ctx = webrtc_streamer(key="sales-assist-live", mode=WebRtcMode.SENDONLY, audio_frame_callback=on_audio,
+                              media_stream_constraints={"audio": True, "video": False}, rtc_configuration=RTC)
     playing = bool(ctx.state.playing)
     if playing and h["rt"] is None:  # mic just started -> open a live session
         if not consent:
@@ -411,7 +504,7 @@ def tab_recent(mgr: SessionManager) -> None:
 def main() -> None:
     st.markdown(CSS, unsafe_allow_html=True)
     mgr = get_mgr()
-    st.markdown("## <span style='color:#1d4ed8'>Sales Assist</span> <span style='font-size:16px;color:#4b5563;font-weight:400'>Hotel Booking Conversation Assistant</span>", unsafe_allow_html=True)
+    st.markdown("## <span style='color:#1d4ed8'>Sales Assist</span> <span class='mobile-sub' style='font-size:16px;color:#4b5563;font-weight:400'>Hotel Booking Conversation Assistant</span>", unsafe_allow_html=True)
     if not mgr.settings.configured:
         st.error("No GOOGLE_API_KEY / GEMINI_API_KEY found. Add it to Streamlit secrets (or .env locally).")
         st.stop()
