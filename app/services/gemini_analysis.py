@@ -19,7 +19,7 @@ LANG_RULES = {
     "English-Tamil (Mixed)": "The conversation mixes Tamil and English. Write questions, summaries and reasons in natural Tamil-English mixed style that an agent can read quickly. Keep names, dates and numbers as spoken.",
 }
 
-SYSTEM = """You are Sales Assist's silent analysis engine for hotel booking conversations between a Customer and a Hotel Booking Agent.
+SYSTEM = """You are SalesMate's silent analysis engine for hotel booking conversations between a Customer and a Hotel Booking Agent.
 You never speak to the customer. You only evaluate the conversation transcript and return JSON.
 
 Hard rules:

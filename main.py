@@ -1,4 +1,4 @@
-"""Sales Assist - Hotel Booking Conversation Assistant (Streamlit). Run with:  streamlit run main.py"""
+"""SalesMate - Hotel Booking Conversation Assistant (Streamlit). Run with:  streamlit run main.py"""
 import asyncio
 import copy
 import html
@@ -33,7 +33,7 @@ from app.services.session_service import SessionManager
 from app.utils.storage import ConfigStore, SessionStore
 from app.utils.validation import fmt_ts, validate_audio
 
-st.set_page_config(page_title="Sales Assist", page_icon="🏨", layout="wide")
+st.set_page_config(page_title="SalesMate", page_icon="🏨", layout="wide")
 
 CSS = """<style>
 .stApp{background:#f3f4f6}.block-container{padding-top:1.5rem;max-width:1400px}
@@ -370,7 +370,7 @@ def show_saved(mgr: SessionManager, sid: str) -> None:
     render_live(s)
     if s.finalized or s.segments:
         st.download_button("Download HTML report", report_service.export_html(s, audio, mgr.settings.embed_audio_max_mb),
-                           file_name=f"sales_assist_{sid}.html", mime="text/html", key=f"dl_{sid}")
+                           file_name=f"salesmate_{sid}.html", mime="text/html", key=f"dl_{sid}")
 
 
 def tab_live(mgr: SessionManager, configs: list) -> None:
@@ -558,7 +558,7 @@ def tab_recent(mgr: SessionManager) -> None:
 def main() -> None:
     st.markdown(CSS, unsafe_allow_html=True)
     mgr = get_mgr()
-    st.markdown("## <span style='color:#1d4ed8'>Sales Assist</span> <span class='mobile-sub' style='font-size:16px;color:#4b5563;font-weight:400'>Hotel Booking Conversation Assistant</span>", unsafe_allow_html=True)
+    st.markdown("## <span style='color:#1d4ed8'>SalesMate</span> <span class='mobile-sub' style='font-size:16px;color:#4b5563;font-weight:400'>Hotel Booking Conversation Assistant</span>", unsafe_allow_html=True)
     if not mgr.settings.configured:
         st.error("No GOOGLE_API_KEY / GEMINI_API_KEY found. Add it to Streamlit secrets (or .env locally).")
         st.stop()

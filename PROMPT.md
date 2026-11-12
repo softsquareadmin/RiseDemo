@@ -1,4 +1,4 @@
-# PROMPT — Build "Sales Assist" (Hotel Booking Conversation Assistant)
+# PROMPT — Build "SalesMate" (Hotel Booking Conversation Assistant)
 
 You are a senior full-stack Python engineer. Build the complete application described below, end to end: all source files, configuration, requirements, README and tests. Read the whole brief first. Part 1 is the business context and Part 2 the product behaviour. Part 3 is the technical specification. Do not skip Part 3 — it contains hard-won details that decide whether the app works.
 
@@ -6,7 +6,7 @@ You are a senior full-stack Python engineer. Build the complete application desc
 
 ## PART 1 — BUSINESS CONTEXT
 
-**Product name:** Sales Assist — Hotel Booking Conversation Assistant.
+**Product name:** SalesMate — Hotel Booking Conversation Assistant.
 
 **Problem.** Hotel reservation agents take booking calls and desk conversations. They must collect a fixed set of information (dates, guests, room type, price acknowledgement, policies, contact details, confirmation). Agents forget questions, customers hang up with gaps, managers cannot audit quality, and notes are typed after the call.
 
