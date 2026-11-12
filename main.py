@@ -46,7 +46,7 @@ CSS = """<style>
 .tr{height:560px;overflow-y:auto}
 .topic{border-bottom:1px solid #e5e7eb;padding:10px 0}.topic .row{display:flex;justify-content:space-between;font-size:17px;font-weight:700}
 .topic .sub{display:flex;justify-content:space-between;color:#6b7280;font-size:14px;margin-top:6px}.topic .tag{background:#f3f4f6;border-radius:999px;padding:2px 10px;font-size:13px}
-.crit{display:flex;gap:12px;align-items:center;font-size:16px;padding:5px 4px}.ok{color:#15803d;font-weight:700;width:16px}.no{color:#9ca3af;width:16px}.rv{color:#b45309;width:16px}
+.crit{display:flex;gap:12px;align-items:center;font-size:16px;padding:5px 4px}.crit .ok{color:#15803d;font-weight:700;width:16px}.crit .no{color:#9ca3af;width:16px}.crit .rv{color:#b45309;font-weight:700;width:16px}
 .stTabs [data-baseweb="tab-list"]{background:#fff;gap:6px;padding:8px 14px;border-radius:10px;border:1px solid #e5e7eb}
 .stTabs [data-baseweb="tab"]{height:auto;padding:10px 18px;border-radius:8px;background:transparent}
 .stTabs [data-baseweb="tab"] p{font-size:18px;font-weight:500;color:#1f2937}
@@ -58,8 +58,8 @@ CSS = """<style>
 .mobile-sub{display:inline}
 .snap{flex-basis:100%;color:#374151;font-size:15px;order:5}.snap .u{color:#b45309}
 .nba{background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb}.nba .top{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px}
-.nba .top .sec{margin:0;color:#1d4ed8}.nba .q{font-size:16px;padding:4px 0;color:#111827}.nba .q.rv{color:#92400e}
-.nba .tg{display:inline-block;font-size:12px;font-weight:700;border-radius:999px;padding:1px 9px;margin-right:6px;background:#dbeafe;color:#1d4ed8}.nba .q.rv .tg{background:#fde68a;color:#92400e}
+.nba .top .sec{margin:0;color:#1d4ed8}.nba .q{font-size:16px;padding:4px 0;color:#111827}.nba .q.review{color:#92400e}
+.nba .tg{display:inline-block;font-size:12px;font-weight:700;border-radius:999px;padding:1px 9px;margin-right:6px;background:#dbeafe;color:#1d4ed8}.nba .q.review .tg{background:#fde68a;color:#92400e}
 .crit{flex-wrap:wrap;gap:4px 10px}.crit .cl{font-weight:600}.crit .cv{color:#1d4ed8}.crit .cf{font-size:12px;font-weight:700;color:#b45309;background:#fef3c7;border-radius:999px;padding:1px 8px}
 .crit .cp{color:#9ca3af;font-size:13px}.line{font-size:14px;color:#374151;margin-top:6px}.line b{color:#15803d}
 @media (max-width:640px){
@@ -71,7 +71,7 @@ CSS = """<style>
   .stTabs [data-baseweb="tab-list"]{padding:5px 6px;gap:2px;overflow-x:auto}
   .stTabs [data-baseweb="tab"]{padding:8px 10px}.stTabs [data-baseweb="tab"] p{font-size:14.5px}
   /* floating START / STOP bar: always reachable while scrolling the report */
-  .st-key-live_ctrl{position:fixed;left:8px;right:84px;bottom:10px;z-index:1000;background:#fff;border:1px solid #cbd5e1;
+  .st-key-live_ctrl{position:fixed!important;left:8px!important;right:84px!important;width:auto!important;max-width:none!important;bottom:10px;z-index:1000;background:#f3f4f6;border:1px solid #cbd5e1;box-sizing:border-box;overflow:hidden;
     border-radius:14px;padding:2px 10px;box-shadow:0 6px 20px rgba(15,23,42,.22)}
 }
 </style>"""
@@ -248,7 +248,7 @@ def _next_action_html(d: dict, s) -> str:
         return f'<div class="card nba"><div class="top"><span class="sec">FOLLOW-UP</span>{chip}</div><div class="q">{text}</div></div>'
     qs = _ask_list(d["questions"], 3)
     if qs:
-        body = "".join(f'<div class="q{" rv" if q.get("needs_review") else ""}"><span class="tg">{e(q.get("label", "Ask"))}</span>{e(q["question"])}</div>' for q in qs)
+        body = "".join(f'<div class="q{" review" if q.get("needs_review") else ""}"><span class="tg">{e(q.get("label", "Ask"))}</span>{e(q["question"])}</div>' for q in qs)
     else:
         body = f'<div class="q">{e(s.next_action) if s.next_action else "All checklist items are covered ✓"}</div>'
     return f'<div class="card nba"><div class="top"><span class="sec">NEXT BEST ACTION</span>{chip}</div>{body}</div>'
@@ -411,7 +411,7 @@ def tab_live(mgr: SessionManager, configs: list) -> None:
     elif st.session_state.get("live_sid"):
         show_saved(mgr, st.session_state["live_sid"])
     else:
-        st.info("Press START above to begin a live session.")
+        st.info("Press START to begin a live session.")
 
 
 def tab_upload(mgr: SessionManager, configs: list) -> None:
